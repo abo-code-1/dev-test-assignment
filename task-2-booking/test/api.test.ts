@@ -168,3 +168,66 @@ test('POST bookings: разные мастера не мешают друг др
   ]);
   assert.deepEqual(results.map((r) => r.status), [201, 201]);
 });
+
+async function cancel(id: string) {
+  const res = await fetch(`${base}/bookings/${id}`, { method: 'DELETE' });
+  return { status: res.status, body: await res.json() };
+}
+
+async function atTime<T>(iso: string, action: () => Promise<T>): Promise<T> {
+  const previous = process.env.NOW;
+  process.env.NOW = iso;
+  try {
+    return await action();
+  } finally {
+    process.env.NOW = previous;
+  }
+}
+
+test('DELETE bookings: отмена освобождает время', async () => {
+  const body = request({ start: '2030-11-28T11:00:00+05:00' });
+  const created = await post(body);
+
+  const res = await cancel(created.body.id);
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body, { ...created.body, status: 'cancelled' });
+
+  assert.equal((await post(body)).status, 201);
+});
+
+test('DELETE bookings: нет записи — 404', async () => {
+  assert.equal((await cancel('bk-404')).status, 404);
+});
+
+test('DELETE bookings: меньше чем за 2 часа — 409 too_late, запись не меняется', async () => {
+  // начало записи: 2030-12-02 06:00 UTC
+  const created = await post(request({ start: '2030-12-02T11:00:00+05:00' }));
+
+  const res = await atTime('2030-12-02T04:00:00.001Z', () => cancel(created.body.id));
+  assert.equal(res.status, 409);
+  assert.deepEqual(res.body, { error: 'too_late' });
+
+  const after = await slots('m-1', 'serviceId=s-cut&date=2030-12-02');
+  assert.equal(after.body.slots.includes('11:00'), false);
+});
+
+test('DELETE bookings: ровно за 2 часа ещё можно', async () => {
+  const created = await post(request({ start: '2030-12-03T11:00:00+05:00' }));
+  const res = await atTime('2030-12-03T04:00:00.000Z', () => cancel(created.body.id));
+  assert.equal(res.status, 200);
+});
+
+test('DELETE bookings: уже прошедшую запись отменить нельзя', async () => {
+  const created = await post(request({ start: '2030-12-04T11:00:00+05:00' }));
+  const res = await atTime('2030-12-05T00:00:00.000Z', () => cancel(created.body.id));
+  assert.equal(res.status, 409);
+});
+
+test('DELETE bookings: повторная отмена — 200, даже когда уже поздно', async () => {
+  const created = await post(request({ start: '2030-12-05T11:00:00+05:00' }));
+  assert.equal((await cancel(created.body.id)).status, 200);
+
+  const again = await atTime('2030-12-05T05:59:00.000Z', () => cancel(created.body.id));
+  assert.equal(again.status, 200);
+  assert.equal(again.body.status, 'cancelled');
+});

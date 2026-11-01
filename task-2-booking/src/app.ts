@@ -1,6 +1,6 @@
 // @rev kc-31
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { createBooking } from './booking.ts';
+import { cancelBooking, createBooking } from './booking.ts';
 import { getSlots } from './slots.ts';
 import { bookingRepo, masters, services } from './store.ts';
 import { isValidDate } from './time.ts';
@@ -54,6 +54,11 @@ export const app = createServer(async (req, res) => {
 
       const result = await createBooking(body);
       return result.ok ? send(res, 201, result.booking) : send(res, result.status, { error: result.error });
+    }
+
+    if (req.method === 'DELETE' && parts[0] === 'bookings' && parts.length === 2) {
+      const result = await cancelBooking(parts[1]);
+      return result.ok ? send(res, 200, result.booking) : send(res, result.status, { error: result.error });
     }
 
     send(res, 404, { error: 'not_found' });

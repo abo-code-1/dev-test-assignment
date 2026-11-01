@@ -1,5 +1,6 @@
 // @rev kc-31
 import { randomUUID } from 'node:crypto';
+import { now } from './clock.ts';
 import { withLock } from './lock.ts';
 import { normalizePhone } from './phone.ts';
 import { getSlots } from './slots.ts';
@@ -12,6 +13,7 @@ export type BookingResult =
   | { ok: false; status: number; error: string };
 
 const MINUTE_MS = 60_000;
+const CANCEL_BEFORE_MS = 120 * MINUTE_MS;
 
 const fail = (status: number, error: string): BookingResult => ({ ok: false, status, error });
 
@@ -55,4 +57,17 @@ export async function createBooking(input: unknown): Promise<BookingResult> {
     await bookingRepo.insert(booking);
     return { ok: true, booking };
   });
+}
+
+export async function cancelBooking(id: string): Promise<BookingResult> {
+  const booking = await bookingRepo.get(id);
+  if (!booking) return fail(404, 'booking_not_found');
+
+  // Раньше проверки времени: повторная отмена успешна даже перед самым началом
+  if (booking.status === 'cancelled') return { ok: true, booking };
+
+  if (Date.parse(booking.start) - now().getTime() < CANCEL_BEFORE_MS) return fail(409, 'too_late');
+
+  await bookingRepo.update(id, { status: 'cancelled' });
+  return { ok: true, booking: { ...booking, status: 'cancelled' } };
 }

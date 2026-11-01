@@ -1,3 +1,4 @@
+// @rev kc-31
 import type { Weekday } from './types.ts';
 
 // Казахстан живёт в одном часовом поясе
@@ -24,5 +25,5 @@ export function weekday(date: string): Weekday {
 export type Range = { start: number; end: number };
 
 export function overlaps(a: Range, b: Range): boolean {
-  return a.start <= b.end && b.start <= a.end;
+  return a.start < b.end && b.start < a.end;
 }

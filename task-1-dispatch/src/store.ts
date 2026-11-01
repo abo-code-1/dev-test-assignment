@@ -1,3 +1,4 @@
+// @rev kc-31
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Assignment, Branch, Order } from './types.ts';
@@ -13,3 +14,6 @@ export const orders: Order[] = load('orders.json');
 
 // orderId -> распределение
 export const assignments = new Map<string, Assignment>();
+
+// `${branchId}|${date}` -> сколько заказов закреплено за филиалом на дату по Алматы
+export const dailyLoad = new Map<string, number>();

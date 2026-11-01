@@ -22,6 +22,18 @@ export function weekday(date: string): Weekday {
   return WEEKDAYS[new Date(`${date}T00:00:00Z`).getUTCDay()];
 }
 
+// Строго 'YYYY-MM-DD' и существующая дата: Date сам по себе превратит 02-31 в 03-03
+export function isValidDate(date: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const parsed = new Date(`${date}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date;
+}
+
+// Момент начала местных суток даты, мс
+export function dayStartMs(date: string): number {
+  return Date.parse(`${date}T00:00:00${TZ_OFFSET}`);
+}
+
 export type Range = { start: number; end: number };
 
 export function overlaps(a: Range, b: Range): boolean {

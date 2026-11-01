@@ -1,5 +1,6 @@
 // @rev kc-31
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createBooking } from './booking.ts';
 import { getSlots } from './slots.ts';
 import { bookingRepo, masters, services } from './store.ts';
 import { isValidDate } from './time.ts';
@@ -40,6 +41,19 @@ export const app = createServer(async (req, res) => {
         date,
         slots: getSlots(master, service, date, bookings),
       });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/bookings') {
+      let body: unknown;
+      try {
+        body = await readJson(req);
+      } catch (err) {
+        if (err instanceof SyntaxError) return send(res, 400, { error: 'invalid_json' });
+        throw err;
+      }
+
+      const result = await createBooking(body);
+      return result.ok ? send(res, 201, result.booking) : send(res, result.status, { error: result.error });
     }
 
     send(res, 404, { error: 'not_found' });

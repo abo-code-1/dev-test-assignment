@@ -57,3 +57,114 @@ test('GET slots: нет мастера или услуги — 404', async () =>
   assert.equal((await slots('m-404', 'serviceId=s-cut&date=2030-11-18')).status, 404);
   assert.equal((await slots('m-1', 'serviceId=s-404&date=2030-11-18')).status, 404);
 });
+
+const request = (over: Record<string, unknown>) => ({
+  masterId: 'm-1',
+  serviceId: 's-cut',
+  start: '2030-11-19T15:00:00+05:00',
+  clientPhone: '8 (701) 234-56-78',
+  ...over,
+});
+
+async function post(body: unknown) {
+  const res = await fetch(`${base}/bookings`, {
+    method: 'POST',
+    body: typeof body === 'string' ? body : JSON.stringify(body),
+  });
+  return { status: res.status, body: await res.json() };
+}
+
+test('POST bookings: создаёт запись в UTC с нормализованным телефоном', async () => {
+  const res = await post(request({}));
+  assert.equal(res.status, 201);
+  assert.match(res.body.id, /^bk-/);
+  assert.deepEqual({ ...res.body, id: '' }, {
+    id: '',
+    masterId: 'm-1',
+    serviceId: 's-cut',
+    start: '2030-11-19T10:00:00.000Z',
+    end: '2030-11-19T11:00:00.000Z',
+    clientPhone: '+77012345678',
+    status: 'active',
+  });
+
+  const after = await slots('m-1', 'serviceId=s-cut&date=2030-11-19');
+  assert.equal(after.body.slots.includes('15:00'), false);
+  assert.equal(after.body.slots.includes('16:00'), true);
+});
+
+test('POST bookings: дата берётся по Алматы при любом часовом поясе', async () => {
+  // 20.11 23:00 в UTC-9 — это четверг 21.11 13:00 по Алматы
+  const res = await post(request({ start: '2030-11-20T23:00:00-09:00' }));
+  assert.equal(res.status, 201);
+  assert.equal(res.body.start, '2030-11-21T08:00:00.000Z');
+});
+
+test('POST bookings: некорректные данные — 400', async () => {
+  const bad = [
+    'не json',
+    '[]',
+    '',
+    { serviceId: 's-cut', start: '2030-11-22T10:00:00Z', clientPhone: '87012345678' },
+    request({ start: undefined }),
+    request({ start: 123 }),
+    request({ start: 'завтра' }),
+    request({ start: '2030-11-22T10:00:00' }), // без часового пояса
+    request({ start: '2030-02-31T10:00:00Z' }),
+    request({ clientPhone: undefined }),
+    request({ clientPhone: 12345 }),
+    request({ clientPhone: '12345' }),
+    request({ serviceId: 's-mani' }), // m-1 не оказывает эту услугу
+  ];
+  for (const body of bad) {
+    const res = await post(body);
+    assert.equal(res.status, 400, JSON.stringify(body));
+  }
+});
+
+test('POST bookings: нет мастера или услуги — 404', async () => {
+  assert.equal((await post(request({ masterId: 'm-404' }))).status, 404);
+  assert.equal((await post(request({ serviceId: 's-404' }))).status, 404);
+});
+
+test('POST bookings: время вне свободных слотов — 409 slot_unavailable', async () => {
+  const taken = [
+    '2030-11-18T10:00:00+05:00', // занято записью bk-1
+    '2030-11-22T10:05:00+05:00', // не кратно шагу
+    '2030-11-22T10:00:30+05:00', // секунды
+    '2030-11-22T14:00:00+05:00', // перерыв
+    '2030-11-22T18:30:00+05:00', // не помещается в рабочий день
+    '2030-11-22T08:00:00+05:00', // до открытия
+    '2030-11-24T12:00:00+05:00', // воскресенье
+    '2030-11-13T12:00:00+05:00', // прошлое
+  ];
+  for (const start of taken) {
+    const res = await post(request({ start }));
+    assert.equal(res.status, 409, start);
+    assert.deepEqual(res.body, { error: 'slot_unavailable' });
+  }
+});
+
+test('POST bookings: из одновременных запросов на одно время создаётся одна запись', async () => {
+  const body = request({ start: '2030-11-25T11:00:00+05:00' });
+  const results = await Promise.all(Array.from({ length: 10 }, () => post(body)));
+
+  assert.equal(results.filter((r) => r.status === 201).length, 1);
+  assert.equal(results.filter((r) => r.status === 409).length, 9);
+});
+
+test('POST bookings: разные услуги с разным началом тоже не накладываются', async () => {
+  const results = await Promise.all([
+    post(request({ start: '2030-11-26T11:00:00+05:00' })), // 11:00–12:00
+    post(request({ start: '2030-11-26T11:30:00+05:00', serviceId: 's-brows' })), // 11:30–12:00
+  ]);
+  assert.deepEqual(results.map((r) => r.status).sort(), [201, 409]);
+});
+
+test('POST bookings: разные мастера не мешают друг другу', async () => {
+  const results = await Promise.all([
+    post(request({ masterId: 'm-1', start: '2030-11-27T11:00:00+05:00' })),
+    post(request({ masterId: 'm-2', start: '2030-11-27T11:00:00+05:00' })),
+  ]);
+  assert.deepEqual(results.map((r) => r.status), [201, 201]);
+});
